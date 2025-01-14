@@ -1,6 +1,6 @@
 #############################################
 #            WELLNEST WEB APPLICATION
-#     WITH NOTIFICATIONS & FAMILY GROUPS
+#   with Calendar, Bug Fixes & Enhancements
 #############################################
 
 import os
@@ -12,17 +12,10 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-
-# Optional: if you want to use requests for Lottie
-# from streamlit_lottie import st_lottie
-import requests
-
-# For hashing passwords
-import hashlib
-
-# For sending email notifications (requires smtplib, email modules)
+import calendar  # For the monthly calendar display
 import smtplib
 from email.mime.text import MIMEText
+import hashlib
 
 #############################################
 #           GLOBAL CONSTANTS / PATHS
@@ -45,8 +38,7 @@ SLEEP_FILE         = os.path.join(DATA_DIR, "sleep.json")
 WEIGHT_FILE        = os.path.join(DATA_DIR, "weight.json")
 CALORIES_FILE      = os.path.join(DATA_DIR, "calories.json")
 
-# NEW: For group/family circle data
-GROUPS_FILE        = os.path.join(DATA_DIR, "groups.json")
+GROUPS_FILE        = os.path.join(DATA_DIR, "groups.json")  # For family/circle feature
 
 # Optional Banner / Splash
 SPLASH_IMAGE_PATH = "path/to/splash_image.png"
@@ -94,12 +86,11 @@ def register_new_user(username: str, password: str, users_data: dict) -> bool:
             "age": None,
             "height_cm": None
         },
-        # Optionally store email server config if you want per-user email sending
-        "smtp": {
+        "smtp": {  # optional, for email
             "host": "",
             "port": 587,
             "username": "",
-            "app_password": ""  # For secure apps (e.g., Gmail app password)
+            "app_password": ""
         }
     }
     save_json(users_data, USERS_FILE)
@@ -119,7 +110,7 @@ steps_data         = load_json(STEPS_FILE)
 sleep_data         = load_json(SLEEP_FILE)
 weight_data        = load_json(WEIGHT_FILE)
 calories_data      = load_json(CALORIES_FILE)
-groups_data        = load_json(GROUPS_FILE)  # new group/family data
+groups_data        = load_json(GROUPS_FILE)
 
 def save_all():
     """Save all major data dictionaries."""
@@ -137,111 +128,29 @@ def save_all():
     save_json(groups_data, GROUPS_FILE)
 
 #############################################
-#     NOTIFICATION & SCHEDULING LOGIC
+#    NOTIFICATION & TRENDS (OPTIONAL)
 #############################################
-def check_and_trigger_notifications(username: str):
-    """
-    Check tasks/appointments that are upcoming within 1 day or 1 hour.
-    Also check water/mood trends.
-    If we find any triggers, we display them on screen,
-    and optionally email them if user has email configured.
-    """
-    # A naive approach: each time user logs in or visits,
-    # we search for upcoming tasks/appointments in the next day/hour.
-
-    # 1) Check tasks/appointments
-    upcoming_events = []
-    now = datetime.now()
-    user_email = users_data[username]["profile"].get("email", "")
-    
-    # For day/time checks, we need tasks_data[username] with date => list of tasks
-    user_tasks = tasks_data.get(username, {})
-    user_apps  = appointments_data.get(username, {})
-
-    # We'll look over the next 2 days to find anything within 1 day or 1 hour from "now"
-    for day_offset in [0, 1]:
-        date_candidate = (now + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-        if date_candidate in user_tasks:
-            for tsk in user_tasks[date_candidate]:
-                # Task time might be "HH:MM" or something
-                dt_obj = parse_task_datetime(date_candidate, tsk.get("time",""))
-                if dt_obj:
-                    diff = (dt_obj - now).total_seconds()
-                    # 1 day = 86400 sec, 1 hour=3600 sec
-                    if 0 < diff <= 3600:
-                        upcoming_events.append(f"[1-hour ALERT] Task '{tsk['name']}' at {tsk['time']} on {date_candidate}")
-                    elif 3600 < diff <= 86400:
-                        upcoming_events.append(f"[1-day ALERT] Task '{tsk['name']}' at {tsk['time']} on {date_candidate}")
-
-        if date_candidate in user_apps:
-            for app_str in user_apps[date_candidate]:
-                # parse out time if possible
-                # we assume format "HH:MM with Dr. X @ location"
-                dt_obj = parse_appointment_datetime(date_candidate, app_str)
-                if dt_obj:
-                    diff = (dt_obj - now).total_seconds()
-                    if 0 < diff <= 3600:
-                        upcoming_events.append(f"[1-hour ALERT] Appointment: {app_str} on {date_candidate}")
-                    elif 3600 < diff <= 86400:
-                        upcoming_events.append(f"[1-day ALERT] Appointment: {app_str} on {date_candidate}")
-
-    # 2) Check water or mood trends
-    # e.g., if last 3 days water average is < 1.0 L, we nudge the user
-    # or if mood is consistently < 2
-    water_alert = check_water_trend(username)
-    if water_alert:
-        upcoming_events.append(water_alert)
-
-    mood_alert = check_mood_trend(username)
-    if mood_alert:
-        upcoming_events.append(mood_alert)
-
-    # Display notifications on screen
-    if upcoming_events:
-        st.info("**NOTIFICATIONS**")
-        for evt in upcoming_events:
-            st.warning(evt)
-
-        # Optionally send email
-        if user_email and users_data[username].get("smtp", {}).get("host"):
-            # If the user has configured an SMTP host & app password
-            with st.expander("Send notifications via email"):
-                if st.button("Send Email Alerts"):
-                    send_email_notifications(username, upcoming_events)
-                    st.success("Email alerts sent.")
-    else:
-        st.info("No new alerts or notifications at this time.")
-
-
 def parse_task_datetime(date_str: str, time_str: str):
     """Attempt to parse date + time string to a datetime object."""
-    # date_str is "YYYY-MM-DD", time_str might be "HH:MM"
     try:
         dt_str = f"{date_str} {time_str}"
-        dt_obj = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-        return dt_obj
+        return datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
     except:
         return None
 
 def parse_appointment_datetime(date_str: str, app_str: str):
-    """
-    Attempt to parse date + time from an appointment string. 
-    E.g. "14:30 with Dr. Bob @ SomeClinic".
-    """
+    """Parse date + time from an appointment string like '14:30 with Dr. Bob @ ...'."""
     try:
-        time_part = app_str.split(" ")[0]  # "14:30"
+        time_part = app_str.split(" ")[0]
         dt_str = f"{date_str} {time_part}"
-        dt_obj = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-        return dt_obj
+        return datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
     except:
         return None
 
-
 def check_water_trend(username: str):
-    """Check if average water intake for last 3 days is very low (< 1 L)."""
+    """If average water intake is very low, return a warning message, else None."""
     user_water = water_data.get(username, {})
-    if not user_water:
-        return None
+    if not user_water: return None
     now = datetime.now()
     total = 0.0
     count = 0
@@ -250,49 +159,43 @@ def check_water_trend(username: str):
         if d_str in user_water:
             total += user_water[d_str]
             count += 1
-    if count == 0:
+    if count == 0: 
         return None
     avg = total / count
     if avg < 1.0:
-        return "Water intake has been quite low for the past few days. Remember to hydrate!"
+        return "Water intake has been quite low for the past few days. Please stay hydrated!"
     return None
 
 def check_mood_trend(username: str):
-    """Check if mood is consistently low (< 2) for the last 3 days."""
+    """If recent mood is consistently low, return a message."""
     user_mood = mood_data.get(username, {})
-    if not user_mood:
-        return None
+    if not user_mood: return None
     now = datetime.now()
     moods = []
     for i in range(1,4):
         d_str = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         if d_str in user_mood:
             moods.append(user_mood[d_str])
-    if len(moods) < 2:
+    if len(moods) < 2: 
         return None
     avg = sum(moods)/len(moods)
     if avg < 2:
-        return "Your recent mood has been quite low. Consider activities or reaching out for support!"
+        return "Your recent mood seems quite low. Consider self-care or reaching out for help."
     return None
 
-
 def send_email_notifications(username: str, messages: list):
-    """
-    Send an email containing the messages to the user,
-    using the user's stored SMTP config.
-    """
+    """Send an email with the given messages to the user's stored email (if any)."""
     user_email = users_data[username]["profile"].get("email","")
-    smtp_config = users_data[username].get("smtp", {})
-    smtp_host     = smtp_config.get("host")
-    smtp_port     = smtp_config.get("port", 587)
-    smtp_user     = smtp_config.get("username")
-    smtp_password = smtp_config.get("app_password")
+    smtp_conf  = users_data[username].get("smtp", {})
+    smtp_host  = smtp_conf.get("host","")
+    smtp_port  = smtp_conf.get("port",587)
+    smtp_user  = smtp_conf.get("username","")
+    smtp_pass  = smtp_conf.get("app_password","")
 
-    if not (user_email and smtp_host and smtp_user and smtp_password):
+    if not (user_email and smtp_host and smtp_user and smtp_pass):
         st.error("Cannot send email: missing or incomplete SMTP configuration.")
         return
 
-    # Build the message
     subject = f"WellNest Notifications for {username}"
     body = "Hello,\n\nHere are your WellNest notifications:\n"
     for msg in messages:
@@ -307,24 +210,73 @@ def send_email_notifications(username: str, messages: list):
     try:
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls()
-            server.login(smtp_user, smtp_password)
+            server.login(smtp_user, smtp_pass)
             server.send_message(msg_obj)
     except Exception as e:
         st.error(f"Error sending email: {e}")
 
+def check_and_trigger_notifications(username: str):
+    """
+    Check tasks/appointments within 1 day or 1 hour, also water/mood trends.
+    Display on screen & optionally email them.
+    """
+    upcoming_events = []
+    now = datetime.now()
+
+    # 1) Tasks
+    user_tasks = tasks_data.get(username, {})
+    user_apps  = appointments_data.get(username, {})
+
+    # Check next 2 days for tasks/appointments
+    for day_offset in [0,1]:
+        dt_candidate = now + timedelta(days=day_offset)
+        date_str = dt_candidate.strftime("%Y-%m-%d")
+
+        # tasks
+        if date_str in user_tasks:
+            for tsk in user_tasks[date_str]:
+                dt_obj = parse_task_datetime(date_str, tsk.get("time",""))
+                if dt_obj:
+                    diff = (dt_obj - now).total_seconds()
+                    if 0 < diff <= 3600:
+                        upcoming_events.append(f"[1-Hour Alert] Task '{tsk['name']}' at {tsk['time']} on {date_str}")
+                    elif 3600 < diff <= 86400:
+                        upcoming_events.append(f"[1-Day Alert] Task '{tsk['name']}' at {tsk['time']} on {date_str}")
+
+        # appointments
+        if date_str in user_apps:
+            for app_str in user_apps[date_str]:
+                dt_obj = parse_appointment_datetime(date_str, app_str)
+                if dt_obj:
+                    diff = (dt_obj - now).total_seconds()
+                    if 0 < diff <= 3600:
+                        upcoming_events.append(f"[1-Hour Alert] Appointment: {app_str} on {date_str}")
+                    elif 3600 < diff <= 86400:
+                        upcoming_events.append(f"[1-Day Alert] Appointment: {app_str} on {date_str}")
+
+    # 2) Water / Mood
+    walert = check_water_trend(username)
+    if walert: upcoming_events.append(walert)
+    malert = check_mood_trend(username)
+    if malert: upcoming_events.append(malert)
+
+    if upcoming_events:
+        st.warning("**NOTIFICATIONS**")
+        for evt in upcoming_events:
+            st.info(evt)
+
+        # Optionally send email
+        if st.button("Send Email Alerts", help="Will send an email of these notifications"):
+            send_email_notifications(username, upcoming_events)
+            st.success("Email alerts sent.")
+    else:
+        st.info("No new alerts or reminders at this time.")
+
+
 #############################################
-#    FAMILY/GROUP (CIRCLE) FUNCTIONALITY
+#        FAMILY/GROUP (CIRCLE) FEATURE
 #############################################
-"""
-We'll let users create or join a group. 
-Groups will be stored in groups_data = {
-  "group1": {
-     "group_name": "SmithFamily",
-     "members": ["alice","bob","charlie"]
-  }
-}
-We then allow group members to see each other's data (some subset).
-"""
+groups_data = load_json(GROUPS_FILE)
 
 def create_group(group_id: str, group_name: str):
     if group_id in groups_data:
@@ -360,12 +312,11 @@ def list_user_groups(username: str):
             user_groups.append((gid, info["group_name"]))
     return user_groups
 
-
 def family_group_view(username: str):
+    """Allow user to manage and view family/circle groups, plus see members' data."""
     st.header("Family / Circle Groups")
-    st.write("Here you can create or join a group. Group members can view each other's basic stats.")
-    
-    # Show user’s current groups
+    st.write("Create or join a group. Group members can view each other's stats.")
+
     user_groups = list_user_groups(username)
     if user_groups:
         st.subheader("Your Groups")
@@ -373,14 +324,13 @@ def family_group_view(username: str):
             st.write(f"- **{gname}** (ID: {gid})")
             if st.button(f"Leave {gname}", key=f"btn_leave_{gid}"):
                 leave_group(gid, username)
-                st.success(f"You left {gname}.")
                 st.experimental_rerun()
     else:
-        st.info("You're not in any group.")
+        st.info("You're not in any group yet.")
 
     st.write("---")
     st.subheader("Join Existing Group")
-    join_gid = st.text_input("Enter Group ID to join")
+    join_gid = st.text_input("Enter Group ID")
     if st.button("Join Group", key="btn_join_grp"):
         if join_gid.strip():
             if join_group(join_gid.strip(), username):
@@ -393,7 +343,7 @@ def family_group_view(username: str):
 
     st.write("---")
     st.subheader("Create a New Group")
-    new_gid = st.text_input("New Group ID", key="grp_new_id")
+    new_gid   = st.text_input("New Group ID", key="grp_new_id")
     new_gname = st.text_input("New Group Name", key="grp_new_name")
     if st.button("Create Group", key="btn_create_grp"):
         if new_gid.strip() and new_gname.strip():
@@ -404,52 +354,37 @@ def family_group_view(username: str):
         else:
             st.error("Please fill in both fields.")
 
-
     st.write("---")
-    # If user is in any group, show the members' data
+    # If the user is in any group, show the members' data
     if user_groups:
         st.subheader("Family / Friends Stats")
         for gid, gname in user_groups:
             st.write(f"**Group**: {gname} (ID: {gid})")
             members = groups_data[gid]["members"]
-            if not members:
-                st.write("- No members in this group?")
-                continue
             st.write(f"**Members**: {', '.join(members)}")
-
-            # Show each member's basic stats (today's water, mood, steps, etc.)
             for m in members:
                 st.write(f"### {m}'s Stats")
                 show_limited_stats(m)
 
-
 def show_limited_stats(username: str):
     """
-    Show a minimal set of stats for a given user
-    (like today's water, steps, mood, etc.),
-    to share with group members.
+    Show minimal stats for a given user (today's water, mood, steps, recent weight).
     """
     today_str = datetime.now().strftime("%Y-%m-%d")
+    w = water_data.get(username, {}).get(today_str, 0.0)
+    st.write(f"- Water Today: {w} L")
 
-    # Water
-    water_val = water_data.get(username, {}).get(today_str, 0.0)
-    st.write(f"- Water Today: {water_val} L")
-
-    # Mood
-    mood_val = mood_data.get(username, {}).get(today_str, None)
-    if mood_val is not None:
-        st.write(f"- Mood Today: {mood_val}/5")
+    mo = mood_data.get(username, {}).get(today_str, None)
+    if mo is not None:
+        st.write(f"- Mood Today: {mo}/5")
     else:
         st.write("- Mood Today: Not logged")
 
-    # Steps
-    steps_val = steps_data.get(username, {}).get(today_str, 0)
-    st.write(f"- Steps Today: {steps_val}")
+    stp = steps_data.get(username, {}).get(today_str, 0)
+    st.write(f"- Steps Today: {stp}")
 
-    # Weight (just show last entry within the last 7 days)
     w_dict = weight_data.get(username, {})
     if w_dict:
-        # find last 7 days if any
         recent_weight = None
         for i in range(7):
             d_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
@@ -460,7 +395,7 @@ def show_limited_stats(username: str):
             st.write(f"- Recent Weight: {recent_weight['weight_kg']} kg (BMI: {recent_weight['bmi']:.1f})")
 
 #############################################
-#      STREAMLIT SESSION/ AUTH
+#       STREAMLIT SESSION / AUTH
 #############################################
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -472,7 +407,7 @@ def main():
     if not st.session_state["logged_in"]:
         show_login_screen()
     else:
-        # Each time we land here, let's run notification checks
+        # Check notifications each time we load the main app:
         check_and_trigger_notifications(st.session_state["current_user"])
         show_main_app()
 
@@ -523,6 +458,7 @@ def show_main_app():
     ])
 
     st.title(APP_TITLE)
+
     if menu == "Home":
         show_home_tab()
     elif menu == "Tasks & Appointments":
@@ -541,13 +477,126 @@ def show_main_app():
         show_settings_tab()
 
 #############################################
-#          EXISTING TABS / FEATURES
+#       MONTHLY CALENDAR DISPLAY
 #############################################
+def make_monthly_calendar_html(year: int, month: int, user: str) -> str:
+    """
+    Builds an HTML table for the given month, highlighting days 
+    that have tasks, appointments, or prescriptions for the user.
+    """
 
+    # Prepare references
+    cal = calendar.Calendar(firstweekday=6)  # 6 = Sunday start, or 0 = Monday
+    # We'll gather all date strings in the month for easy look-up
+    # e.g., "2025-01-07"
+    events = set()
+    
+    # We look for tasks_data, appointments_data, and prescriptions_data
+    # We'll mark any day that has tasks, appointments, or prescriptions as an "eventful" day.
+    
+    # tasks
+    user_tasks = tasks_data.get(user, {})
+    # appointments
+    user_apps  = appointments_data.get(user, {})
+    # prescriptions: we check if the day is in any prescription schedule
+    user_rx    = prescriptions_data.get(user, {})
+
+    # We'll create a set of "YYYY-MM-DD" strings that have events
+    for day_str, tsklist in user_tasks.items():
+        if tsklist:  # if there's at least one task
+            events.add(day_str)
+    for day_str, applist in user_apps.items():
+        if applist:
+            events.add(day_str)
+    # For prescriptions, we search each prescription's "Schedule"
+    for rx_name, rx_info in user_rx.items():
+        sched = rx_info.get("Schedule", [])
+        for entry in sched:
+            y, m, d = entry["Year"], entry["Month"], entry["Day"]
+            dt_str = f"{y:04d}-{m:02d}-{d:02d}"
+            events.add(dt_str)
+
+    # Now we build a table with color-coded cells for event days
+    month_name = calendar.month_name[month]
+    html = f"<table style='border-collapse:collapse; width:100%; font-size:16px;'>"
+    html += f"<caption style='text-align:center; font-weight:bold; font-size:18px; margin-bottom:8px;'>{month_name} {year}</caption>"
+    # Header row for days of the week
+    days_of_week = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+    html += "<thead><tr>"
+    for dow in days_of_week:
+        html += f"<th style='border:1px solid #999; padding:6px; background-color:#EEE;'>{dow}</th>"
+    html += "</tr></thead>"
+
+    html += "<tbody>"
+    for week in cal.monthdatescalendar(year, month):
+        # `week` is a list of 7 datetime.date objects
+        html += "<tr>"
+        for day in week:
+            day_str = day.strftime("%Y-%m-%d")
+            # We'll check if the day belongs to the current month
+            if day.month == month:
+                if day_str in events:
+                    # highlight
+                    style = "background-color:#FFEB3B; color:#000; border:1px solid #999; padding:8px; text-align:center;"
+                else:
+                    style = "border:1px solid #999; padding:8px; text-align:center;"
+                html += f"<td style='{style}'>{day.day}</td>"
+            else:
+                # Gray out days from previous/next month
+                html += f"<td style='border:1px solid #999; padding:8px; color:#CCC; text-align:center;'>{day.day}</td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
+
+#############################################
+#              HOME TAB
+#############################################
 def show_home_tab():
+    user = st.session_state["current_user"]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # We'll let user pick a year and month for the large calendar
+    now = datetime.now()
+    st.subheader("Monthly Overview Calendar")
+    colCal1, colCal2, colCal3 = st.columns(3)
+    with colCal1:
+        picked_year = st.number_input("Year", value=now.year, min_value=1900, max_value=2100, step=1)
+    with colCal2:
+        picked_month = st.selectbox("Month", list(range(1,13)), index=now.month-1)
+    with colCal3:
+        st.write("")  # spacing
+        if st.button("Show Calendar"):
+            st.experimental_rerun()
+
+    # Display a big HTML calendar
+    cal_html = make_monthly_calendar_html(int(picked_year), int(picked_month), user)
+    st.markdown(cal_html, unsafe_allow_html=True)
+
+    # If the displayed month includes "today", we can also list today's quick stats:
+    st.write("---")
+    st.subheader("Today's Quick Stats")
+    tasks_today = tasks_data.get(user, {}).get(today_str, [])
+    st.write(f"- **Tasks Today**: {len(tasks_today)}")
+
+    apps_today = appointments_data.get(user, {}).get(today_str, [])
+    st.write(f"- **Appointments Today**: {len(apps_today)}")
+
+    mood_today = mood_data.get(user, {}).get(today_str, None)
+    if mood_today is not None:
+        st.write(f"- **Mood**: {mood_today}/5")
+    else:
+        st.write("- **Mood**: Not logged")
+
+    water_today = water_data.get(user, {}).get(today_str, 0.0)
+    st.write(f"- **Water Intake**: {water_today} L")
+
+    steps_today = steps_data.get(user, {}).get(today_str, 0)
+    st.write(f"- **Steps**: {steps_today}")
+
+    # Optionally show a banner image
+    st.write("---")
     colA, colB = st.columns([2,3])
     with colA:
-        # Show a splash or banner if desired
         if os.path.isfile(SPLASH_IMAGE_PATH):
             try:
                 img = Image.open(SPLASH_IMAGE_PATH)
@@ -556,63 +605,12 @@ def show_home_tab():
                 st.write("Welcome to WellNest!")
         else:
             st.write("Welcome to WellNest!")
-
     with colB:
-        st.subheader("Dashboard Overview")
-        user = st.session_state["current_user"]
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        st.info("Use the sidebar to navigate different sections.")
 
-        tasks_today = tasks_data.get(user, {}).get(today_str, [])
-        st.write(f"- **Tasks Today**: {len(tasks_today)}")
-
-        apps_today = appointments_data.get(user, {}).get(today_str, [])
-        st.write(f"- **Appointments Today**: {len(apps_today)}")
-
-        mood_today = mood_data.get(user, {}).get(today_str, None)
-        if mood_today is not None:
-            st.write(f"- **Today's Mood**: {mood_today}/5")
-        else:
-            st.write("- **Today's Mood**: Not Logged")
-
-        water_today = water_data.get(user, {}).get(today_str, 0)
-        st.write(f"- **Water Intake**: {water_today} L")
-
-        steps_today = steps_data.get(user, {}).get(today_str, 0)
-        st.write(f"- **Steps**: {steps_today}")
-
-    st.write("---")
-    st.subheader("Quick Actions")
-    with st.expander("Log Today's Mood"):
-        mood_val = st.slider("Mood (1=Sad, 5=Happy)", 1, 5, 3)
-        if st.button("Save Mood"):
-            if st.session_state["current_user"] not in mood_data:
-                mood_data[st.session_state["current_user"]] = {}
-            mood_data[st.session_state["current_user"]][today_str] = mood_val
-            save_all()
-            st.success("Mood logged.")
-
-    with st.expander("Add Today's Water Intake"):
-        add_water = st.number_input("Liters to add", min_value=0.0, step=0.1)
-        if st.button("Add Water"):
-            curr_val = water_data.get(st.session_state["current_user"], {}).get(today_str, 0)
-            new_val  = curr_val + add_water
-            if st.session_state["current_user"] not in water_data:
-                water_data[st.session_state["current_user"]] = {}
-            water_data[st.session_state["current_user"]][today_str] = new_val
-            save_all()
-            st.success(f"Water updated. Total: {new_val} L")
-
-    with st.expander("Log Steps"):
-        add_steps = st.number_input("Steps to add", min_value=0, step=100)
-        if st.button("Add Steps"):
-            curr_val = steps_data.get(st.session_state["current_user"], {}).get(today_str, 0)
-            new_val  = curr_val + add_steps
-            if st.session_state["current_user"] not in steps_data:
-                steps_data[st.session_state["current_user"]] = {}
-            steps_data[st.session_state["current_user"]][today_str] = new_val
-            save_all()
-            st.success(f"Steps updated to {new_val} today.")
-
+#############################################
+#  TASKS & APPOINTMENTS TAB
+#############################################
 def show_tasks_appointments_tab():
     st.header("Tasks & Appointments")
     user = st.session_state["current_user"]
@@ -623,7 +621,7 @@ def show_tasks_appointments_tab():
 
     sel_date = st.date_input("Select date", value=datetime.now())
     date_str = sel_date.strftime("%Y-%m-%d")
-    st.write(f"Selected date: {date_str}")
+    st.write(f"Selected date: **{date_str}**")
 
     # Ensure date keys exist
     if date_str not in tasks_data[user]:
@@ -632,21 +630,22 @@ def show_tasks_appointments_tab():
         appointments_data[user][date_str] = []
 
     col1, col2 = st.columns(2)
+
     with col1:
         st.subheader("Tasks")
         day_tasks = tasks_data[user][date_str]
         if day_tasks:
             for i, tsk in enumerate(day_tasks):
-                st.write(f"{i+1}. **{tsk['name']}** @ {tsk['time']} (Assignee: {tsk.get('assignee','N/A')} | Status: {tsk['status']})")
+                st.write(f"{i+1}. **{tsk['name']}** @ {tsk['time']} (Assigned: {tsk.get('assignee','N/A')} | Status: {tsk['status']})")
         else:
-            st.info("No tasks.")
+            st.info("No tasks for this date.")
 
-        with st.expander("Add a new task"):
-            tname = st.text_input("Task Name")
-            tassn = st.text_input("Assigned To")
-            ttime = st.text_input("Time (HH:MM)")
-            tstatus = st.selectbox("Status", ["Pending","In-progress","Completed"])
-            if st.button("Save Task"):
+        with st.expander("Add a New Task"):
+            tname = st.text_input("Task Name", key="task_name")
+            tassn = st.text_input("Assigned To", key="task_assn")
+            ttime = st.text_input("Time (HH:MM)", key="task_time")
+            tstatus = st.selectbox("Status", ["Pending","In-progress","Completed"], key="task_status")
+            if st.button("Save Task", key="btn_save_task"):
                 if tname and ttime:
                     new_task = {
                         "name": tname,
@@ -657,8 +656,9 @@ def show_tasks_appointments_tab():
                     tasks_data[user][date_str].append(new_task)
                     save_all()
                     st.success("Task added.")
+                    st.experimental_rerun()
                 else:
-                    st.error("Task name and time required.")
+                    st.error("Task name and time are required.")
 
     with col2:
         st.subheader("Appointments")
@@ -667,21 +667,53 @@ def show_tasks_appointments_tab():
             for i, a in enumerate(day_apps):
                 st.write(f"{i+1}. {a}")
         else:
-            st.info("No appointments.")
+            st.info("No appointments for this date.")
 
-        with st.expander("Add a new appointment"):
-            atime = st.text_input("Time (HH:MM)")
-            doc   = st.text_input("Doctor's Name")
-            loc   = st.text_input("Location")
-            if st.button("Save Appointment"):
+        with st.expander("Add a New Appointment"):
+            atime = st.text_input("Time (HH:MM)", key="appt_time")
+            doc   = st.text_input("Doctor's Name", key="appt_doctor")
+            loc   = st.text_input("Location", key="appt_location")
+            if st.button("Save Appointment", key="btn_save_appt"):
                 if atime and doc and loc:
                     desc = f"{atime} with Dr. {doc} @ {loc}"
                     appointments_data[user][date_str].append(desc)
                     save_all()
                     st.success("Appointment added.")
+                    st.experimental_rerun()
                 else:
                     st.error("Fill out all fields.")
 
+#############################################
+#    PRESCRIPTIONS & SCHEDULING
+#############################################
+def schedule_prescriptions(start_date_str, days_of_week_str, num_weeks):
+    try:
+        start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+    except:
+        return None
+    try:
+        w = int(num_weeks)
+    except:
+        return None
+    day_map = {
+        "mon": 1, "tue": 2, "wed": 3,
+        "thu": 4, "fri": 5, "sat": 6, "sun": 7
+    }
+    raw_days = [x.strip().lower() for x in days_of_week_str.split(",") if x.strip()]
+    valid_days = [day_map[d] for d in raw_days if d in day_map]
+    schedule = []
+    for wk in range(w):
+        block_start = start_dt + timedelta(weeks=wk)
+        for dnum in valid_days:
+            offset = (dnum - block_start.isoweekday()) % 7
+            date_target = block_start + timedelta(days=offset)
+            schedule.append({
+                "Day": date_target.day,
+                "Month": date_target.month,
+                "Year": date_target.year,
+                "Status": "scheduled"
+            })
+    return schedule
 
 def show_prescriptions_tab():
     st.header("Prescriptions")
@@ -692,17 +724,20 @@ def show_prescriptions_tab():
     # List existing
     st.subheader("Your Prescriptions")
     if prescriptions_data[user]:
-        for rx_name, rx_info in prescriptions_data[user].items():
+        for rx_name, rx_info in list(prescriptions_data[user].items()):
             with st.expander(rx_name):
                 minfo = rx_info.get("Medication Info", {})
                 st.write(f"**Description**: {minfo.get('Description','N/A')}")
                 st.write(f"**Taken with food?** {minfo.get('Taken with food','N/A')}")
 
-                if "Schedule" in rx_info:
-                    for entry in rx_info["Schedule"]:
+                sched = rx_info.get("Schedule", [])
+                if sched:
+                    for entry in sched:
                         y, m, d = entry["Year"], entry["Month"], entry["Day"]
                         stt = entry.get("Status", "scheduled")
                         st.write(f" - {y}-{m:02d}-{d:02d} [{stt}]")
+                else:
+                    st.info("No scheduled dates found.")
 
                 if st.button(f"Delete {rx_name}"):
                     del prescriptions_data[user][rx_name]
@@ -711,43 +746,43 @@ def show_prescriptions_tab():
     else:
         st.info("No prescriptions yet.")
 
-    # Add new
     st.write("---")
     st.subheader("Add a New Prescription")
-    rx_name = st.text_input("Prescription Name")
-    rx_desc = st.text_input("Description")
-    rx_food = st.selectbox("Taken with food?", ["Yes","No"])
-    rx_start = st.date_input("Start Date", value=datetime.now())
-    rx_days  = st.text_input("Days of Week (e.g. Mon,Wed,Fri)")
-    rx_weeks = st.text_input("Number of Weeks", value="4")
+    rx_name_val = st.text_input("Prescription Name", key="rx_name")
+    rx_desc_val = st.text_input("Description", key="rx_desc")
+    rx_food_val = st.selectbox("Taken with food?", ["Yes","No"], key="rx_food")
+    rx_start    = st.date_input("Start Date", value=datetime.now(), key="rx_start_date")
+    rx_days     = st.text_input("Days of Week (e.g., Mon,Wed,Fri)", key="rx_days")
+    rx_weeks    = st.text_input("Number of Weeks", value="4", key="rx_weeks")
 
-    if st.button("Create Prescription"):
-        if rx_name.strip():
+    if st.button("Create Prescription", key="btn_create_rx"):
+        if rx_name_val.strip():
             sched = schedule_prescriptions(rx_start.strftime("%Y-%m-%d"), rx_days, rx_weeks)
             if sched is None:
                 st.error("Invalid scheduling data.")
             else:
-                prescriptions_data[user][rx_name] = {
+                prescriptions_data[user][rx_name_val] = {
                     "Medication Info": {
-                        "Description": rx_desc,
-                        "Taken with food": rx_food
+                        "Description": rx_desc_val,
+                        "Taken with food": rx_food_val
                     },
                     "Schedule": sched
                 }
                 save_all()
-                st.success(f"Prescription '{rx_name}' created.")
+                st.success(f"Prescription '{rx_name_val}' created with {len(sched)} entries.")
+                st.experimental_rerun()
         else:
             st.error("Name is required.")
 
     st.write("---")
     st.subheader("Update Prescription Status")
     if prescriptions_data[user]:
-        selected_rx = st.selectbox("Select Prescription", list(prescriptions_data[user].keys()))
-        sel_date = st.date_input("Date to update", value=datetime.now())
-        new_status = st.selectbox("New Status", ["scheduled","taken on time","missed"])
-        if st.button("Update Status"):
+        pick_rx = st.selectbox("Select Prescription", list(prescriptions_data[user].keys()))
+        sel_date = st.date_input("Date to Update", value=datetime.now(), key="upd_rx_date")
+        new_status = st.selectbox("New Status", ["scheduled","taken on time","missed"], key="upd_rx_status")
+        if st.button("Update Status", key="btn_update_rx"):
             found_entry = None
-            for e in prescriptions_data[user][selected_rx]["Schedule"]:
+            for e in prescriptions_data[user][pick_rx]["Schedule"]:
                 dt = datetime(e["Year"], e["Month"], e["Day"])
                 if dt.date() == sel_date:
                     found_entry = e
@@ -755,22 +790,20 @@ def show_prescriptions_tab():
             if found_entry:
                 found_entry["Status"] = new_status
                 save_all()
-                st.success("Updated.")
+                st.success("Updated prescription status.")
             else:
                 st.warning("No matching date in schedule.")
     else:
         st.info("No prescriptions to update.")
 
-
+#############################################
+#       HEALTH TRACKING TAB
+#############################################
 def show_health_tracking_tab():
     st.header("Health Tracking")
-    # (Same logic as the older example for mood, water, steps, sleep, weight, calories.)
-    # You can replicate or keep your advanced code from the previous example.
-
     user = st.session_state["current_user"]
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Ensure sub-dicts
     if user not in mood_data:     mood_data[user] = {}
     if user not in water_data:    water_data[user] = {}
     if user not in steps_data:    steps_data[user] = {}
@@ -779,78 +812,78 @@ def show_health_tracking_tab():
     if user not in calories_data: calories_data[user] = {}
 
     col1, col2, col3 = st.columns(3)
-    # Mood, Sleep, Water, Steps, Weight/BMI, Calories
+
+    # Mood & Sleep
     with col1:
         st.subheader("Mood")
         curr_mood = mood_data[user].get(today_str, None)
-        if curr_mood: 
-            st.write(f"Today's Mood: {curr_mood}/5")
-        log_mood = st.slider("Log Mood", 1, 5, 3)
-        if st.button("Set Mood"):
-            mood_data[user][today_str] = log_mood
+        st.write(f"Today: {curr_mood}/5" if curr_mood is not None else "No mood logged.")
+        mood_val = st.slider("Set Mood (1–5)", 1, 5, 3)
+        if st.button("Log Mood"):
+            mood_data[user][today_str] = mood_val
             save_all()
-            st.success("Mood set.")
+            st.success("Mood updated.")
 
         st.subheader("Sleep")
         curr_sleep = sleep_data[user].get(today_str, None)
-        if curr_sleep is not None:
-            st.write(f"Today: {curr_sleep} hours")
-        log_sleep = st.number_input("Hours of sleep", 0.0, 24.0, 7.0, step=0.5)
+        st.write(f"Today: {curr_sleep} hours" if curr_sleep is not None else "No sleep logged.")
+        log_sleep = st.number_input("Add Sleep Hours", 0.0, 24.0, 7.0, step=0.5)
         if st.button("Log Sleep"):
             sleep_data[user][today_str] = log_sleep
             save_all()
             st.success(f"Sleep logged: {log_sleep} hrs")
 
+    # Water & Steps
     with col2:
         st.subheader("Water Intake")
-        water_val = water_data[user].get(today_str, 0.0)
-        st.write(f"Today so far: {water_val} L")
-        add_water = st.number_input("Liters to add", 0.0, 10.0, 0.5, step=0.1)
+        w_val = water_data[user].get(today_str, 0.0)
+        st.write(f"Today so far: {w_val} L")
+        add_w = st.number_input("Liters to add", 0.0, 10.0, 0.5, step=0.25)
         if st.button("Add Water"):
-            new_total = water_val + add_water
+            new_total = w_val + add_w
             water_data[user][today_str] = new_total
             save_all()
-            st.success(f"Updated total: {new_total} L")
+            st.success(f"Water updated: {new_total} L")
 
         st.subheader("Steps")
-        steps_val = steps_data[user].get(today_str, 0)
-        st.write(f"Today so far: {steps_val}")
-        add_steps = st.number_input("Steps to add", 0, 30000, 1000, step=500)
+        s_val = steps_data[user].get(today_str, 0)
+        st.write(f"Today so far: {s_val} steps")
+        add_s = st.number_input("Steps to add", 0, 30000, 1000, step=500)
         if st.button("Add Steps"):
-            new_st = steps_val + add_steps
-            steps_data[user][today_str] = new_st
+            new_steps = s_val + add_s
+            steps_data[user][today_str] = new_steps
             save_all()
-            st.success(f"Steps updated: {new_st}")
+            st.success(f"Steps updated: {new_steps}")
 
+    # Weight & Calories
     with col3:
         st.subheader("Weight & BMI")
-        w_dict = weight_data[user].get(today_str, None)
-        if w_dict:
-            st.write(f"Today: {w_dict['weight_kg']} kg, BMI: {w_dict['bmi']:.1f}")
+        wdict = weight_data[user].get(today_str, None)
+        if wdict:
+            st.write(f"Today: {wdict['weight_kg']} kg, BMI: {wdict['bmi']:.1f}")
         else:
-            st.write("No weight for today.")
-        weight_kg = st.number_input("Weight (kg)", 30.0, 300.0, 70.0)
-        # Grab user’s height from profile or default
-        height_cm = users_data[user]["profile"].get("height_cm", 170)
+            st.write("No weight logged today.")
+        w_kg = st.number_input("Weight (kg)", 30.0, 300.0, 70.0)
+        user_height = users_data[user]["profile"].get("height_cm", 170)
         if st.button("Log Weight"):
-            bmi_val = round(weight_kg / ((height_cm/100)**2),2)
-            weight_data[user][today_str] = {
-                "weight_kg": weight_kg,
-                "bmi": bmi_val
-            }
+            bmi_val = round(w_kg / ((user_height/100)**2), 2)
+            weight_data[user][today_str] = {"weight_kg": w_kg, "bmi": bmi_val}
             save_all()
-            st.success(f"Weight logged: {weight_kg} kg (BMI={bmi_val})")
+            st.success(f"Logged weight: {w_kg} kg (BMI: {bmi_val:.1f})")
 
         st.subheader("Calories")
         c_val = calories_data[user].get(today_str, 0)
         st.write(f"Today: {c_val} kcal")
-        add_cal = st.number_input("Add Calories", 0, 5000, 500, step=100)
+        add_c = st.number_input("Add Calories", 0, 5000, 500, step=100)
         if st.button("Add Calories"):
-            new_c = c_val + add_cal
+            new_c = c_val + add_c
             calories_data[user][today_str] = new_c
             save_all()
             st.success(f"Calories updated: {new_c}")
 
+#############################################
+#           ANALYTICS TAB
+#############################################
 def show_analytics_tab():
     st.header("Analytics & Trends")
     user = st.session_state["current_user"]
@@ -860,21 +893,18 @@ def show_analytics_tab():
         "Steps History", 
         "Weight/BMI Progress", 
         "Prescription Status",
-        "Calorie Intake"
+        "Calorie Intake",
     ])
 
-    # (Same logic as earlier for each sub-section, with charts.)
-    # You can copy from previous examples.
-
     if sub_tab == "Water Intake":
-        st.subheader("Water (Last 14 Days)")
+        st.subheader("Water Intake (Last 14 Days)")
         user_water = water_data.get(user, {})
         date_list = []
         val_list  = []
         for i in range(14):
-            d_str = (datetime.now()-timedelta(days=13-i)).strftime("%Y-%m-%d")
+            d_str = (datetime.now() - timedelta(days=13 - i)).strftime("%Y-%m-%d")
             date_list.append(d_str)
-            val_list.append(user_water.get(d_str,0))
+            val_list.append(user_water.get(d_str, 0.0))
 
         fig, ax = plt.subplots()
         ax.bar(date_list, val_list, color="blue")
@@ -889,32 +919,35 @@ def show_analytics_tab():
         date_list = []
         mood_list = []
         for i in range(14):
-            d_str = (datetime.now()-timedelta(days=13-i)).strftime("%Y-%m-%d")
+            d_str = (datetime.now() - timedelta(days=13 - i)).strftime("%Y-%m-%d")
             date_list.append(d_str)
-            mood_list.append(user_mood.get(d_str,0))
+            mood_list.append(user_mood.get(d_str, 0))
 
         fig, ax = plt.subplots()
         ax.plot(date_list, mood_list, marker="o", color="red")
         ax.set_xticklabels(date_list, rotation=45, ha="right")
         ax.set_ylim(0,6)
-        ax.set_title("Mood Trend")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Mood (1–5)")
+        ax.set_title("Mood Trend Over Last 14 Days")
         st.pyplot(fig)
 
     elif sub_tab == "Steps History":
         st.subheader("Steps (Last 14 Days)")
         user_steps = steps_data.get(user, {})
         date_list = []
-        steps_list = []
+        s_list = []
         for i in range(14):
-            d_str = (datetime.now()-timedelta(days=13-i)).strftime("%Y-%m-%d")
+            d_str = (datetime.now() - timedelta(days=13 - i)).strftime("%Y-%m-%d")
             date_list.append(d_str)
-            steps_list.append(user_steps.get(d_str,0))
+            s_list.append(user_steps.get(d_str, 0))
 
         fig, ax = plt.subplots()
-        ax.bar(date_list, steps_list, color="green")
+        ax.bar(date_list, s_list, color="green")
         ax.set_xticklabels(date_list, rotation=45, ha="right")
+        ax.set_xlabel("Date")
         ax.set_ylabel("Steps")
-        ax.set_title("Steps Trend")
+        ax.set_title("Steps Over Last 14 Days")
         st.pyplot(fig)
 
     elif sub_tab == "Weight/BMI Progress":
@@ -922,9 +955,9 @@ def show_analytics_tab():
         w_dict = weight_data.get(user, {})
         date_list = []
         weight_vals = []
-        bmi_vals    = []
+        bmi_vals = []
         for i in range(30):
-            d_str = (datetime.now()-timedelta(days=29-i)).strftime("%Y-%m-%d")
+            d_str = (datetime.now() - timedelta(days=29 - i)).strftime("%Y-%m-%d")
             date_list.append(d_str)
             if d_str in w_dict:
                 weight_vals.append(w_dict[d_str]["weight_kg"])
@@ -933,7 +966,7 @@ def show_analytics_tab():
                 weight_vals.append(None)
                 bmi_vals.append(None)
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8,3))
         ax.plot(date_list, weight_vals, marker="o", label="Weight (kg)", color="blue")
         ax2 = ax.twinx()
         ax2.plot(date_list, bmi_vals, marker="s", label="BMI", color="orange")
@@ -945,16 +978,19 @@ def show_analytics_tab():
 
         lines1, labels1 = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        ax2.legend(lines1+lines2, labels1+labels2, loc="upper left")
+        ax2.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
 
         st.pyplot(fig)
 
     elif sub_tab == "Prescription Status":
         st.subheader("Medication Status Distribution")
         user_rx = prescriptions_data.get(user, {})
+        if not user_rx:
+            st.info("No prescriptions found.")
+            return
         statuses = {"scheduled":0, "taken on time":0, "missed":0}
         for rx_name, rx_info in user_rx.items():
-            for entry in rx_info.get("Schedule",[]):
+            for entry in rx_info.get("Schedule", []):
                 stt = entry.get("Status","scheduled")
                 if stt not in statuses:
                     statuses[stt] = 0
@@ -962,28 +998,34 @@ def show_analytics_tab():
 
         labels = list(statuses.keys())
         values = list(statuses.values())
-        fig, ax = plt.subplots()
-        ax.pie(values, labels=labels, autopct="%1.1f%%")
-        ax.set_title("Prescription Status Overview")
-        st.pyplot(fig)
+        if sum(values) == 0:
+            st.info("No prescription entries found.")
+        else:
+            fig, ax = plt.subplots()
+            ax.pie(values, labels=labels, autopct="%1.1f%%")
+            ax.set_title("Prescription Status Overview")
+            st.pyplot(fig)
 
     elif sub_tab == "Calorie Intake":
-        st.subheader("Calories (Last 14 Days)")
+        st.subheader("Calorie Intake (Last 14 Days)")
         c_dict = calories_data.get(user, {})
         date_list = []
         cals_list = []
         for i in range(14):
-            d_str = (datetime.now()-timedelta(days=13-i)).strftime("%Y-%m-%d")
+            d_str = (datetime.now() - timedelta(days=13 - i)).strftime("%Y-%m-%d")
             date_list.append(d_str)
-            cals_list.append(c_dict.get(d_str,0))
+            cals_list.append(c_dict.get(d_str, 0))
 
         fig, ax = plt.subplots()
         ax.bar(date_list, cals_list, color="purple")
         ax.set_xticklabels(date_list, rotation=45, ha="right")
         ax.set_ylabel("kcal")
-        ax.set_title("Calorie Intake")
+        ax.set_title("Daily Calorie Intake Over 14 Days")
         st.pyplot(fig)
 
+#############################################
+#           NOTES / JOURNAL TAB
+#############################################
 def show_notes_tab():
     st.header("Personal Notes / Journaling")
     user = st.session_state["current_user"]
@@ -1019,12 +1061,15 @@ def show_notes_tab():
             else:
                 st.error("Note cannot be empty.")
 
+#############################################
+#          SETTINGS TAB
+#############################################
 def show_settings_tab():
     st.header("Settings & Profile")
     user = st.session_state["current_user"]
     profile = users_data[user]["profile"]
-    colA, colB = st.columns(2)
 
+    colA, colB = st.columns(2)
     with colA:
         name_val = st.text_input("Name", profile.get("name", ""))
         email_val= st.text_input("Email", profile.get("email", ""))
@@ -1046,7 +1091,7 @@ def show_settings_tab():
 
     with colB:
         st.subheader("SMTP / Email Config")
-        st.write("Fill these if you want email notifications.")
+        st.write("Configure for email notifications.")
         smtp_host = st.text_input("SMTP Host", users_data[user]["smtp"].get("host",""))
         smtp_port = st.number_input("SMTP Port", 1,99999, users_data[user]["smtp"].get("port",587))
         smtp_user = st.text_input("SMTP Username", users_data[user]["smtp"].get("username",""))
@@ -1067,7 +1112,7 @@ def show_settings_tab():
         st.experimental_rerun()
 
 #############################################
-#           RUN THE APP
+#           START THE APP
 #############################################
 if __name__ == "__main__":
     main()
