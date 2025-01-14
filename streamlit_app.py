@@ -225,7 +225,8 @@ def show_login_screen():
                 st.session_state["logged_in"] = True
                 st.session_state["current_user"] = uname
                 st.success("Logged in successfully.")
-                st.experimental_rerun()
+                st.session_state["logged_in"] = True # Instead of rerun, do st.stop() or let Streamlit continue automatically:
+                st.stop()   # gracefully ends execution here
             else:
                 st.error("Invalid username or password.")
 
@@ -938,3 +939,4 @@ def main():
 #######################################
 if __name__ == "__main__":
     main()
+
