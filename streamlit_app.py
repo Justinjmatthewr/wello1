@@ -1,12 +1,13 @@
 #############################################
-#            WELLNEST WEB APPLICATION
-#   with Calendar, Bug Fixes & Enhancements
+#      WELLNEST WEB APPLICATION
+#    With Calendar Enhancements & Fixes
 #############################################
 
 import os
 import json
 import datetime
 from datetime import datetime, timedelta
+import math
 
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -150,7 +151,8 @@ def parse_appointment_datetime(date_str: str, app_str: str):
 def check_water_trend(username: str):
     """If average water intake is very low, return a warning message, else None."""
     user_water = water_data.get(username, {})
-    if not user_water: return None
+    if not user_water:
+        return None
     now = datetime.now()
     total = 0.0
     count = 0
@@ -159,7 +161,7 @@ def check_water_trend(username: str):
         if d_str in user_water:
             total += user_water[d_str]
             count += 1
-    if count == 0: 
+    if count == 0:
         return None
     avg = total / count
     if avg < 1.0:
@@ -169,14 +171,15 @@ def check_water_trend(username: str):
 def check_mood_trend(username: str):
     """If recent mood is consistently low, return a message."""
     user_mood = mood_data.get(username, {})
-    if not user_mood: return None
+    if not user_mood:
+        return None
     now = datetime.now()
     moods = []
     for i in range(1,4):
         d_str = (now - timedelta(days=i)).strftime("%Y-%m-%d")
         if d_str in user_mood:
             moods.append(user_mood[d_str])
-    if len(moods) < 2: 
+    if len(moods) < 2:
         return None
     avg = sum(moods)/len(moods)
     if avg < 2:
@@ -266,18 +269,15 @@ def check_and_trigger_notifications(username: str):
             st.info(evt)
 
         # Optionally send email
-        if st.button("Send Email Alerts", help="Will send an email of these notifications"):
+        if st.button("Send Email Alerts", help="Click to email these notifications"):
             send_email_notifications(username, upcoming_events)
             st.success("Email alerts sent.")
     else:
         st.info("No new alerts or reminders at this time.")
 
-
 #############################################
 #        FAMILY/GROUP (CIRCLE) FEATURE
 #############################################
-groups_data = load_json(GROUPS_FILE)
-
 def create_group(group_id: str, group_name: str):
     if group_id in groups_data:
         return False
@@ -324,7 +324,8 @@ def family_group_view(username: str):
             st.write(f"- **{gname}** (ID: {gid})")
             if st.button(f"Leave {gname}", key=f"btn_leave_{gid}"):
                 leave_group(gid, username)
-                st.experimental_rerun()
+                st.success(f"You left group {gname}.")
+                st.stop()  # Ends this run after leaving, so UI can refresh
     else:
         st.info("You're not in any group yet.")
 
@@ -335,7 +336,7 @@ def family_group_view(username: str):
         if join_gid.strip():
             if join_group(join_gid.strip(), username):
                 st.success(f"Joined group {join_gid}")
-                st.experimental_rerun()
+                st.stop()
             else:
                 st.error("Group not found or other error.")
         else:
@@ -407,7 +408,7 @@ def main():
     if not st.session_state["logged_in"]:
         show_login_screen()
     else:
-        # Check notifications each time we load the main app:
+        # Check notifications each time we land on main
         check_and_trigger_notifications(st.session_state["current_user"])
         show_main_app()
 
@@ -425,7 +426,7 @@ def show_login_screen():
                 st.session_state["logged_in"] = True
                 st.session_state["current_user"] = uname
                 st.success("You are now logged in.")
-                st.experimental_rerun()
+                st.stop()
             else:
                 st.error("Invalid username or password.")
 
@@ -477,73 +478,85 @@ def show_main_app():
         show_settings_tab()
 
 #############################################
-#       MONTHLY CALENDAR DISPLAY
+#  MONTHLY CALENDAR WITH EVENTS LIST
 #############################################
 def make_monthly_calendar_html(year: int, month: int, user: str) -> str:
     """
-    Builds an HTML table for the given month, highlighting days 
-    that have tasks, appointments, or prescriptions for the user.
+    Builds an HTML table for the given month, embedding 
+    tasks, appointments, and prescriptions directly inside each day cell.
     """
 
     # Prepare references
-    cal = calendar.Calendar(firstweekday=6)  # 6 = Sunday start, or 0 = Monday
-    # We'll gather all date strings in the month for easy look-up
-    # e.g., "2025-01-07"
-    events = set()
-    
-    # We look for tasks_data, appointments_data, and prescriptions_data
-    # We'll mark any day that has tasks, appointments, or prescriptions as an "eventful" day.
-    
-    # tasks
+    cal = calendar.Calendar(firstweekday=6)  # 6 = Sunday start
+    month_name = calendar.month_name[month]
+
+    # Gather user-specific references
     user_tasks = tasks_data.get(user, {})
-    # appointments
     user_apps  = appointments_data.get(user, {})
-    # prescriptions: we check if the day is in any prescription schedule
     user_rx    = prescriptions_data.get(user, {})
 
-    # We'll create a set of "YYYY-MM-DD" strings that have events
-    for day_str, tsklist in user_tasks.items():
-        if tsklist:  # if there's at least one task
-            events.add(day_str)
-    for day_str, applist in user_apps.items():
-        if applist:
-            events.add(day_str)
-    # For prescriptions, we search each prescription's "Schedule"
-    for rx_name, rx_info in user_rx.items():
-        sched = rx_info.get("Schedule", [])
-        for entry in sched:
-            y, m, d = entry["Year"], entry["Month"], entry["Day"]
-            dt_str = f"{y:04d}-{m:02d}-{d:02d}"
-            events.add(dt_str)
+    # Build the table
+    html = (f"<table style='border-collapse:collapse; width:100%; font-size:14px;'>"
+            f"<caption style='text-align:center; font-weight:bold; font-size:18px; margin-bottom:8px;'>"
+            f"{month_name} {year}</caption>")
 
-    # Now we build a table with color-coded cells for event days
-    month_name = calendar.month_name[month]
-    html = f"<table style='border-collapse:collapse; width:100%; font-size:16px;'>"
-    html += f"<caption style='text-align:center; font-weight:bold; font-size:18px; margin-bottom:8px;'>{month_name} {year}</caption>"
-    # Header row for days of the week
+    # Days of week row
     days_of_week = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
     html += "<thead><tr>"
     for dow in days_of_week:
-        html += f"<th style='border:1px solid #999; padding:6px; background-color:#EEE;'>{dow}</th>"
+        html += f"<th style='border:1px solid #999; padding:6px; background-color:#DDD;'>{dow}</th>"
     html += "</tr></thead>"
 
     html += "<tbody>"
     for week in cal.monthdatescalendar(year, month):
-        # `week` is a list of 7 datetime.date objects
         html += "<tr>"
         for day in week:
-            day_str = day.strftime("%Y-%m-%d")
-            # We'll check if the day belongs to the current month
+            style = "border:1px solid #999; vertical-align:top; padding:6px;"
             if day.month == month:
-                if day_str in events:
-                    # highlight
-                    style = "background-color:#FFEB3B; color:#000; border:1px solid #999; padding:8px; text-align:center;"
-                else:
-                    style = "border:1px solid #999; padding:8px; text-align:center;"
-                html += f"<td style='{style}'>{day.day}</td>"
+                # Build content for this day
+                day_str = day.strftime("%Y-%m-%d")
+                content_html = f"<strong>{day.day}</strong>"
+                # Collect tasks, appointments, prescriptions
+                day_events = []
+
+                # tasks
+                day_tasks = user_tasks.get(day_str, [])
+                if day_tasks:
+                    day_events.append("<u>Tasks</u>:<ul style='margin:0; padding-left:14px;'>"
+                                      + "".join([f"<li>{t['name']} @ {t['time']}</li>" for t in day_tasks])
+                                      + "</ul>")
+
+                # appointments
+                day_apps = user_apps.get(day_str, [])
+                if day_apps:
+                    day_events.append("<u>Appointments</u>:<ul style='margin:0; padding-left:14px;'>"
+                                      + "".join([f"<li>{app}</li>" for app in day_apps])
+                                      + "</ul>")
+
+                # prescriptions
+                # We must check each prescription schedule for matching date
+                presc_list = []
+                for rx_name, rx_info in user_rx.items():
+                    sched = rx_info.get("Schedule", [])
+                    for entry in sched:
+                        if (entry["Year"] == day.year and
+                            entry["Month"] == day.month and
+                            entry["Day"] == day.day):
+                            # Optionally show status
+                            stt = entry.get("Status", "scheduled")
+                            presc_list.append(f"{rx_name} [{stt}]")
+                if presc_list:
+                    day_events.append("<u>Prescriptions</u>:<ul style='margin:0; padding-left:14px;'>"
+                                      + "".join([f"<li>{p}</li>" for p in presc_list])
+                                      + "</ul>")
+
+                if day_events:
+                    content_html += "<br>" + "<br>".join(day_events)
+
+                html += f"<td style='{style}'>{content_html}</td>"
             else:
-                # Gray out days from previous/next month
-                html += f"<td style='border:1px solid #999; padding:8px; color:#CCC; text-align:center;'>{day.day}</td>"
+                # Another month
+                html += f"<td style='{style} color:#CCC;'>{day.day}</td>"
         html += "</tr>"
     html += "</tbody></table>"
     return html
@@ -555,24 +568,18 @@ def show_home_tab():
     user = st.session_state["current_user"]
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # We'll let user pick a year and month for the large calendar
     now = datetime.now()
     st.subheader("Monthly Overview Calendar")
-    colCal1, colCal2, colCal3 = st.columns(3)
+    colCal1, colCal2 = st.columns(2)
     with colCal1:
         picked_year = st.number_input("Year", value=now.year, min_value=1900, max_value=2100, step=1)
     with colCal2:
         picked_month = st.selectbox("Month", list(range(1,13)), index=now.month-1)
-    with colCal3:
-        st.write("")  # spacing
-        if st.button("Show Calendar"):
-            st.experimental_rerun()
 
-    # Display a big HTML calendar
+    # Display the big HTML calendar
     cal_html = make_monthly_calendar_html(int(picked_year), int(picked_month), user)
     st.markdown(cal_html, unsafe_allow_html=True)
 
-    # If the displayed month includes "today", we can also list today's quick stats:
     st.write("---")
     st.subheader("Today's Quick Stats")
     tasks_today = tasks_data.get(user, {}).get(today_str, [])
@@ -656,7 +663,7 @@ def show_tasks_appointments_tab():
                     tasks_data[user][date_str].append(new_task)
                     save_all()
                     st.success("Task added.")
-                    st.experimental_rerun()
+                    # st.stop()  # If you want an immediate partial refresh
                 else:
                     st.error("Task name and time are required.")
 
@@ -679,7 +686,7 @@ def show_tasks_appointments_tab():
                     appointments_data[user][date_str].append(desc)
                     save_all()
                     st.success("Appointment added.")
-                    st.experimental_rerun()
+                    # st.stop()
                 else:
                     st.error("Fill out all fields.")
 
@@ -729,7 +736,6 @@ def show_prescriptions_tab():
                 minfo = rx_info.get("Medication Info", {})
                 st.write(f"**Description**: {minfo.get('Description','N/A')}")
                 st.write(f"**Taken with food?** {minfo.get('Taken with food','N/A')}")
-
                 sched = rx_info.get("Schedule", [])
                 if sched:
                     for entry in sched:
@@ -739,10 +745,11 @@ def show_prescriptions_tab():
                 else:
                     st.info("No scheduled dates found.")
 
-                if st.button(f"Delete {rx_name}"):
+                if st.button(f"Delete {rx_name}", key=f"del_{rx_name}"):
                     del prescriptions_data[user][rx_name]
                     save_all()
-                    st.experimental_rerun()
+                    st.success(f"Deleted prescription '{rx_name}'.")
+                    st.stop()  # partial refresh
     else:
         st.info("No prescriptions yet.")
 
@@ -770,7 +777,7 @@ def show_prescriptions_tab():
                 }
                 save_all()
                 st.success(f"Prescription '{rx_name_val}' created with {len(sched)} entries.")
-                st.experimental_rerun()
+                # st.stop()
         else:
             st.error("Name is required.")
 
@@ -791,6 +798,7 @@ def show_prescriptions_tab():
                 found_entry["Status"] = new_status
                 save_all()
                 st.success("Updated prescription status.")
+                # st.stop()
             else:
                 st.warning("No matching date in schedule.")
     else:
@@ -823,6 +831,7 @@ def show_health_tracking_tab():
             mood_data[user][today_str] = mood_val
             save_all()
             st.success("Mood updated.")
+            # st.stop()
 
         st.subheader("Sleep")
         curr_sleep = sleep_data[user].get(today_str, None)
@@ -832,6 +841,7 @@ def show_health_tracking_tab():
             sleep_data[user][today_str] = log_sleep
             save_all()
             st.success(f"Sleep logged: {log_sleep} hrs")
+            # st.stop()
 
     # Water & Steps
     with col2:
@@ -844,6 +854,7 @@ def show_health_tracking_tab():
             water_data[user][today_str] = new_total
             save_all()
             st.success(f"Water updated: {new_total} L")
+            # st.stop()
 
         st.subheader("Steps")
         s_val = steps_data[user].get(today_str, 0)
@@ -854,6 +865,7 @@ def show_health_tracking_tab():
             steps_data[user][today_str] = new_steps
             save_all()
             st.success(f"Steps updated: {new_steps}")
+            # st.stop()
 
     # Weight & Calories
     with col3:
@@ -863,13 +875,18 @@ def show_health_tracking_tab():
             st.write(f"Today: {wdict['weight_kg']} kg, BMI: {wdict['bmi']:.1f}")
         else:
             st.write("No weight logged today.")
+
         w_kg = st.number_input("Weight (kg)", 30.0, 300.0, 70.0)
-        user_height = users_data[user]["profile"].get("height_cm", 170)
+        # Safely handle user height for BMI
+        user_height = users_data[user]["profile"].get("height_cm", 170) or 170
+        if user_height <= 0:
+            user_height = 170
         if st.button("Log Weight"):
-            bmi_val = round(w_kg / ((user_height/100)**2), 2)
+            bmi_val = round(w_kg / ((user_height/100.0)**2), 2)
             weight_data[user][today_str] = {"weight_kg": w_kg, "bmi": bmi_val}
             save_all()
             st.success(f"Logged weight: {w_kg} kg (BMI: {bmi_val:.1f})")
+            # st.stop()
 
         st.subheader("Calories")
         c_val = calories_data[user].get(today_str, 0)
@@ -880,6 +897,7 @@ def show_health_tracking_tab():
             calories_data[user][today_str] = new_c
             save_all()
             st.success(f"Calories updated: {new_c}")
+            # st.stop()
 
 #############################################
 #           ANALYTICS TAB
@@ -1045,7 +1063,8 @@ def show_notes_tab():
                 if st.button(f"Delete Note #{i+1}", key=f"btn_del_note_{i}"):
                     day_notes.pop(i)
                     save_all()
-                    st.experimental_rerun()
+                    st.success("Note deleted.")
+                    st.stop()
     else:
         st.info("No notes for today.")
 
@@ -1057,7 +1076,7 @@ def show_notes_tab():
                 notes_data[user][today_str].append(new_note.strip())
                 save_all()
                 st.success("Note saved.")
-                st.experimental_rerun()
+                st.stop()
             else:
                 st.error("Note cannot be empty.")
 
@@ -1076,7 +1095,7 @@ def show_settings_tab():
         gender_val= st.selectbox("Gender", ["","Male","Female","Other"], 
                      index=0 if not profile.get("gender") else ["","Male","Female","Other"].index(profile["gender"]))
         age_val   = st.number_input("Age", 0,120, value=profile.get("age") or 0)
-        height_val= st.number_input("Height (cm)", 100,250, value=profile.get("height_cm") or 170)
+        height_val= st.number_input("Height (cm)", 1,250, value=profile.get("height_cm") or 170)
 
         if st.button("Save Profile"):
             users_data[user]["profile"] = {
@@ -1088,6 +1107,7 @@ def show_settings_tab():
             }
             save_all()
             st.success("Profile updated.")
+            # st.stop()
 
     with colB:
         st.subheader("SMTP / Email Config")
@@ -1104,12 +1124,14 @@ def show_settings_tab():
             users_data[user]["smtp"]["app_password"]= smtp_pass
             save_all()
             st.success("SMTP settings saved.")
+            # st.stop()
 
     st.write("---")
     if st.button("Log Out"):
         st.session_state["logged_in"] = False
         st.session_state["current_user"] = None
-        st.experimental_rerun()
+        st.success("You have been logged out.")
+        st.stop()
 
 #############################################
 #           START THE APP
