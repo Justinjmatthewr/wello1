@@ -1,0 +1,28 @@
+{
+    "Panadol": {
+        "Prescription": [
+            {
+                "Day": 16,
+                "Month": 11,
+                "Year": 2024
+            },
+            {
+                "Day": 17,
+                "Month": 11,
+                "Year": 2024
+            }
+        ],
+        "Medication Info": {
+            "Description": "take 2 times daily",
+            "Taken with food": "yes"
+        },
+        "status": "taken on time"
+    },
+    "p": {
+        "Prescription": [],
+        "Medication Info": {
+            "Description": "1",
+            "Taken with food": "yes"
+        }
+    }
+}
