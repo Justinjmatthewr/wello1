@@ -443,18 +443,6 @@ def show_limited_stats(username: str):
 #           DAILY CHALLENGES
 #############################################
 
-"""
-We'll store daily challenges in a dictionary like:
-daily_challenges = {
-  '2025-01-14': [
-     {'challenge': 'Drink 2L of water', 'completed_by': []},
-     {'challenge': 'Walk 8000 steps',   'completed_by': ['alice'] }
-  ]
-}
-We won't store them in a separate file for brevity, but we could.
-We'll define a function to get today's challenges or set them.
-"""
-
 daily_challenges = {}
 # Example predefined
 daily_challenges["2025-01-14"] = [
